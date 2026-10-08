@@ -49,11 +49,13 @@ const THEMES = {
     file: "contributions-dark.svg",
     text: "#E6EDF3", muted: "#8B949E",
     levels: ["#161B22", "#4A2A1E", "#8A3F21", "#C95A2B", "#FF7A45"],
+    snake: "#E6EDF3",
   },
   light: {
     file: "contributions-light.svg",
     text: "#1F2328", muted: "#59636E",
     levels: ["#EFF2F5", "#F7CDB8", "#F0A07A", "#E5733F", "#D9531E"],
+    snake: "#1F2328",
   },
 };
 
@@ -67,34 +69,73 @@ function levelOf(count, max) {
 
 function render(cal, t) {
   const cell = 14, gap = 4, left = 40, top = 56;
+  const pitch = cell + gap;
   const weeks = cal.weeks;
   const max = Math.max(1, ...weeks.flatMap((w) => w.contributionDays.map((d) => d.contributionCount)));
   const width = 1000;
-  const height = top + 7 * (cell + gap) + 44;
-  const gridW = weeks.length * (cell + gap) - gap;
+  const height = top + 7 * pitch + 44;
+  const gridW = weeks.length * pitch - gap;
   const scale = Math.min(1, (width - left * 2) / gridW);
 
-  let rects = "";
+  // Snake route: serpentine through every day, week by week (down, then up, ...),
+  // entering from off-canvas on the left and leaving off-canvas on the right.
+  const route = [];
   weeks.forEach((w, wi) => {
-    w.contributionDays.forEach((d) => {
-      const lv = levelOf(d.contributionCount, max);
-      const x = wi * (cell + gap);
-      const y = d.weekday * (cell + gap);
-      rects += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="3" fill="${t.levels[lv]}"><title>${d.date}: ${d.contributionCount}</title></rect>`;
-    });
+    const days = [...w.contributionDays].sort((a, b) => a.weekday - b.weekday);
+    if (wi % 2) days.reverse();
+    for (const d of days) route.push({ x: wi * pitch + cell / 2, y: d.weekday * pitch + cell / 2, d });
+  });
+  const SEGMENTS = 6;
+  const offLeft = -(left / scale) - pitch * (SEGMENTS + 2);
+  const offRight = (width - left) / scale + pitch * (SEGMENTS + 2);
+  const first = route[0], last = route[route.length - 1];
+  const pts = [{ x: offLeft, y: first.y }, ...route, { x: offRight, y: last.y }];
+
+  // Cumulative distance along the route -> time at which the head reaches each cell.
+  const STEP = 0.09;                       // seconds per cell
+  const speed = pitch / STEP;              // units per second
+  const dist = [0];
+  for (let i = 1; i < pts.length; i++) dist.push(dist[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  const total = dist[dist.length - 1];
+  const dur = total / speed;
+  const pathD = "M" + pts.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join("L");
+
+  let rects = "";
+  route.forEach((r, i) => {
+    const lv = levelOf(r.d.contributionCount, max);
+    const x = r.x - cell / 2, y = r.y - cell / 2;
+    const tip = `<title>${r.d.date}: ${r.d.contributionCount}</title>`;
+    if (lv === 0) {
+      rects += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="3" fill="${t.levels[0]}">${tip}</rect>`;
+    } else {
+      // Cell is "eaten" when the head reaches it, and grows back when the loop restarts.
+      const k = (dist[i + 1] / total).toFixed(5);
+      rects += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="3" fill="${t.levels[lv]}">${tip}` +
+        `<animate attributeName="fill" values="${t.levels[lv]};${t.levels[0]}" keyTimes="0;${k}" calcMode="discrete" dur="${dur.toFixed(2)}s" repeatCount="indefinite"/></rect>`;
+    }
   });
 
-  const legendX = width - left - 5 * (cell + gap) - 40;
+  // Snake body: segments follow the same path, each one cell behind the previous.
+  let snake = "";
+  for (let i = SEGMENTS - 1; i >= 0; i--) {
+    const size = cell - 2 - i * 0.8;
+    const lag = i * STEP;
+    const begin = lag === 0 ? "0s" : `-${(dur - lag).toFixed(2)}s`;
+    snake += `<rect x="${(-size / 2).toFixed(1)}" y="${(-size / 2).toFixed(1)}" width="${size.toFixed(1)}" height="${size.toFixed(1)}" rx="${(size / 3).toFixed(1)}" fill="${t.snake}" opacity="${(1 - i * 0.12).toFixed(2)}">` +
+      `<animateMotion path="${pathD}" dur="${dur.toFixed(2)}s" begin="${begin}" repeatCount="indefinite" calcMode="linear"/></rect>`;
+  }
+
+  const legendX = width - left - 5 * pitch - 40;
   const legend = t.levels.map((c, i) =>
-    `<rect x="${legendX + 34 + i * (cell + gap)}" y="${height - 30}" width="${cell}" height="${cell}" rx="3" fill="${c}"/>`).join("");
+    `<rect x="${legendX + 34 + i * pitch}" y="${height - 30}" width="${cell}" height="${cell}" rx="3" fill="${c}"/>`).join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <title>${cal.totalContributions} contributions in the last year</title>
 <text x="${left}" y="32" font-family="${MONO}" font-size="13" fill="${t.muted}"><tspan fill="${t.text}" font-weight="700">${cal.totalContributions}</tspan> contributions in the last year</text>
-<g transform="translate(${left} ${top}) scale(${scale.toFixed(4)})">${rects}</g>
+<g transform="translate(${left} ${top}) scale(${scale.toFixed(4)})">${rects}${snake}</g>
 <text x="${legendX}" y="${height - 19}" font-family="${MONO}" font-size="11" fill="${t.muted}">less</text>
 ${legend}
-<text x="${legendX + 34 + 5 * (cell + gap) + 4}" y="${height - 19}" font-family="${MONO}" font-size="11" fill="${t.muted}">more</text>
+<text x="${legendX + 34 + 5 * pitch + 4}" y="${height - 19}" font-family="${MONO}" font-size="11" fill="${t.muted}">more</text>
 </svg>
 `;
 }

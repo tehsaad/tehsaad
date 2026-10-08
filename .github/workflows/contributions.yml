@@ -1,4 +1,4 @@
-name: Update contribution graph
+name: Update contribution snake
 
 on:
   schedule:
@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Render contribution graph (dark + light)
+      - name: Render contribution snake (dark + light)
         run: node .github/scripts/contributions.mjs
         env:
           GH_USER: ${{ github.repository_owner }}
