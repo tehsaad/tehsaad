@@ -1,0 +1,44 @@
+name: Update contribution graph
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # every day at 00:00 UTC
+  workflow_dispatch:      # run manually from the Actions tab
+  push:
+    branches: [main]
+    paths:
+      - ".github/scripts/contributions.mjs"
+      - ".github/workflows/contributions.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: contributions
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render contribution graph (dark + light)
+        run: node .github/scripts/contributions.mjs
+        env:
+          GH_USER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUT_DIR: dist
+
+      - name: Publish to the output branch
+        run: |
+          cd dist
+          git init -q -b output
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -q -m "Update contribution graph"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" output
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
